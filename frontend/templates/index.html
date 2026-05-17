@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Confidence-Aware OCR Dashboard</title>
+  <meta name="description" content="Advanced OCR dashboard with Multi-Scale Retinex, blur classification, closed-loop retry, and plate database lookup for Indian number plates."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap"/>
+  <link rel="stylesheet" href="/static/css/style.css"/>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M7 8h10M7 12h6M7 16h8"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">Confidence-Aware OCR</h1>
+        <p class="brand-sub">Degraded Text Analysis · Indian ANPR</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="header-badges">
+        <span class="badge badge-green">High ≥ 80%</span>
+        <span class="badge badge-yellow">Medium 50–79%</span>
+        <span class="badge badge-red">Low &lt; 50%</span>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="history-toggle-btn" title="View scan history">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        History
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="main">
+
+  <!-- ── Upload Section ──────────────────────────────────────────────────── -->
+  <section class="section" id="upload-section">
+    <h2 class="section-title">Upload Image</h2>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept="image/*" hidden/>
+      <div class="upload-icon">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <p class="upload-text">Drag &amp; drop an image here, or <span class="upload-link">browse</span></p>
+      <p class="upload-hint">PNG, JPG, TIFF, BMP — up to 16 MB</p>
+    </div>
+
+    <div class="upload-preview" id="upload-preview" style="display:none">
+      <!-- Canvas crop selector -->
+      <div class="crop-area">
+        <p class="crop-hint" id="crop-hint">
+          🖱 <strong>Drag</strong> on the image to select the region to analyze.
+          Leave unselected to process the full image.
+        </p>
+        <div class="crop-canvas-wrap" id="crop-canvas-wrap">
+          <canvas id="crop-canvas"></canvas>
+        </div>
+        <div class="crop-actions">
+          <span class="crop-status" id="crop-status">No selection — full image will be used</span>
+          <button class="btn btn-ghost btn-sm" id="clear-crop-btn" style="display:none">✕ Clear selection</button>
+        </div>
+      </div>
+
+      <!-- Info + controls -->
+      <div class="preview-info">
+        <p id="preview-name" class="preview-name"></p>
+        <p id="preview-size" class="preview-size"></p>
+        <button class="btn btn-primary" id="analyze-btn">Analyze Image</button>
+        <button class="btn btn-ghost" id="change-btn">Change Image</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Loading ─────────────────────────────────────────────────────────── -->
+  <div class="loading-panel" id="loading-panel" style="display:none">
+    <div class="spinner"></div>
+    <p class="loading-text" id="loading-text">Running preprocessing...</p>
+    <div class="loading-steps">
+      <span class="lstep" id="ls1">Upscaling &amp; Denoising</span>
+      <span class="lstep" id="ls2">Blur Classification (FFT)</span>
+      <span class="lstep" id="ls3">13-Variant Enhancement</span>
+      <span class="lstep" id="ls4">Ensemble OCR (78 passes)</span>
+      <span class="lstep" id="ls5">Retinex + Retry Loop</span>
+      <span class="lstep" id="ls6">Building report</span>
+    </div>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────────────────── -->
+  <div id="results-panel" style="display:none">
+
+    <!-- ── NOVELTY ROW: Image Quality + Plate DB ─────────────────────────── -->
+    <div class="novelty-row" id="novelty-row">
+
+      <!-- Image Quality Card -->
+      <section class="section novelty-card" id="quality-card">
+        <h2 class="section-title">
+          <span class="icon-badge">📡</span> Image Quality Analysis
+          <span class="novelty-tag">Novelty</span>
+        </h2>
+        <div id="quality-content"></div>
+      </section>
+
+      <!-- Plate DB Card -->
+      <section class="section novelty-card" id="plate-db-card">
+        <h2 class="section-title">
+          <span class="icon-badge">🔍</span> Plate Database Lookup
+          <span class="novelty-tag">Novelty</span>
+        </h2>
+        <div id="plate-db-content"></div>
+      </section>
+
+    </div>
+
+    <!-- ── Retry Trace ─────────────────────────────────────────────────── -->
+    <section class="section" id="retry-section" style="display:none">
+      <h2 class="section-title">
+        <span class="icon-badge">🔁</span> Closed-Loop Retry Trace
+        <span class="novelty-tag">Novelty</span>
+      </h2>
+      <p class="steps-info">The system iteratively mutated preprocessing parameters until the plate matched the Indian format regex.</p>
+      <div id="retry-trace"></div>
+    </section>
+
+    <!-- Stats Row -->
+    <section class="section">
+      <h2 class="section-title">Confidence Overview</h2>
+      <div class="stats-grid" id="stats-grid"></div>
+    </section>
+
+    <!-- Image Comparison -->
+    <section class="section">
+      <h2 class="section-title">Image Comparison</h2>
+      <div class="tab-bar">
+        <button class="tab active" data-tab="annotated">Annotated View</button>
+        <button class="tab" data-tab="raw">Original vs Enhanced</button>
+        <button class="tab" data-tab="steps">Processing Steps</button>
+      </div>
+
+      <div class="tab-content active" id="tab-annotated">
+        <div class="image-pair">
+          <div class="img-card">
+            <div class="img-card-header">Baseline Result (No Enhancement)</div>
+            <div class="img-wrap"><img id="ann-original" src="" alt="Annotated original"/></div>
+          </div>
+          <div class="img-card">
+            <div class="img-card-header">Enhanced Result (13-Variant Pipeline + MSR Retinex)</div>
+            <div class="img-wrap"><img id="ann-enhanced" src="" alt="Annotated enhanced"/></div>
+          </div>
+        </div>
+        <div class="legend">
+          <span class="leg-item"><span class="leg-dot green"></span>High confidence (≥ 80)</span>
+          <span class="leg-item"><span class="leg-dot yellow"></span>Medium confidence (50–79)</span>
+          <span class="leg-item"><span class="leg-dot red"></span>Low confidence (&lt; 50)</span>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-raw">
+        <div class="image-pair">
+          <div class="img-card">
+            <div class="img-card-header">Original (unprocessed)</div>
+            <div class="img-wrap"><img id="img-original" src="" alt="Original"/></div>
+          </div>
+          <div class="img-card">
+            <div class="img-card-header">Enhanced (preprocessed)</div>
+            <div class="img-wrap"><img id="img-enhanced" src="" alt="Enhanced"/></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content" id="tab-steps">
+        <p class="steps-info">13-stage preprocessing pipeline applied to your image:</p>
+        <div class="steps-row">
+          <div class="step-badge">1. Grayscale</div><div class="step-arrow">→</div>
+          <div class="step-badge">2. Upscale (≥300 DPI)</div><div class="step-arrow">→</div>
+          <div class="step-badge">3. Blur Classify (FFT)</div><div class="step-arrow">→</div>
+          <div class="step-badge">4. Denoise (NLM)</div><div class="step-arrow">→</div>
+          <div class="step-badge">5. CLAHE contrast</div><div class="step-arrow">→</div>
+          <div class="step-badge">6. Unsharp mask</div><div class="step-arrow">→</div>
+          <div class="step-badge">7. Binarize (Otsu/Adaptive)</div><div class="step-arrow">→</div>
+          <div class="step-badge">8. Morph open</div><div class="step-arrow">→</div>
+          <div class="step-badge">9. Deskew</div><div class="step-arrow">→</div>
+          <div class="step-badge nova">10. MSR Retinex ✨</div><div class="step-arrow">→</div>
+          <div class="step-badge nova">11. Plate Regex Retry ✨</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Confidence Bar Chart -->
+    <section class="section">
+      <h2 class="section-title">Confidence Distribution</h2>
+      <div class="chart-row">
+        <div class="chart-card">
+          <p class="chart-label">Original image</p>
+          <div class="conf-bar-wrap" id="bar-original"></div>
+        </div>
+        <div class="chart-card">
+          <p class="chart-label">Enhanced image</p>
+          <div class="conf-bar-wrap" id="bar-enhanced"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Extracted Text -->
+    <section class="section">
+      <h2 class="section-title">Extracted Text</h2>
+
+      <!-- Plate number display -->
+      <div class="plate-display" id="plate-display"></div>
+
+      <!-- Large Document Text Display -->
+      <div class="document-display" id="document-display" style="margin-top:14px;"></div>
+
+      <!-- Clean text box -->
+      <div class="text-box" id="text-main" style="margin-top:14px;"></div>
+
+      <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-ghost copy-btn" id="copy-main-btn">Copy text</button>
+        <span class="ocr-engine-badge" id="ocr-engine-badge"></span>
+      </div>
+
+      <!-- Word-level highlights toggle -->
+      <details style="margin-top:18px;">
+        <summary style="cursor:pointer;font-size:13px;color:#6b7280;user-select:none;">
+          ▶ Show word-level confidence highlights
+        </summary>
+        <div class="text-box highlighted-text" id="text-highlighted" style="margin-top:10px;"></div>
+      </details>
+    </section>
+
+    <!-- Word-level Table -->
+    <section class="section">
+      <h2 class="section-title">Word-Level Confidence Report</h2>
+      <div class="table-controls">
+        <input type="text" id="word-search" placeholder="Search words..." class="search-input"/>
+        <select id="conf-filter" class="select-input">
+          <option value="all">All confidence levels</option>
+          <option value="high">High only</option>
+          <option value="medium">Medium only</option>
+          <option value="low">Low only</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="word-table" id="word-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Word</th>
+              <th>Confidence</th>
+              <th>Level</th>
+              <th>Position (x, y)</th>
+            </tr>
+          </thead>
+          <tbody id="word-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Reset -->
+    <div class="reset-row">
+      <button class="btn btn-ghost" id="reset-btn">Analyze another image</button>
+    </div>
+
+  </div><!-- /results-panel -->
+
+  <!-- ── History Drawer ─────────────────────────────────────────────────── -->
+  <div class="history-overlay" id="history-overlay" style="display:none" onclick="closeHistory()"></div>
+  <aside class="history-drawer" id="history-drawer">
+    <div class="history-header">
+      <h2 class="history-title">Scan History</h2>
+      <button class="btn btn-ghost btn-sm" onclick="closeHistory()">✕ Close</button>
+    </div>
+    <div id="history-list"></div>
+  </aside>
+
+</main>
+
+<footer class="footer">
+  <p>Confidence-Aware OCR for Degraded Text Images · Digital Image Processing Project · Novelty: MSR Retinex · Blur Classifier · Closed-Loop Retry · Plate DB</p>
+</footer>
+
+<script src="/static/js/dashboard.js"></script>
+</body>
+</html>
